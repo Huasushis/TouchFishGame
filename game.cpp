@@ -10,9 +10,34 @@
 #define PORT 11451
 using namespace std;
 char playericon[7] = "@&*%$+";
+char killnumber[10][50];
+char mesg[50];
 #define iconamount (6)
+struct wch {
+  char a, b;
+  wch() {a = b = 0;}
+  wch(char a): a(a) {b = 0;}
+  wch(char a, char b): a(a), b(b) {}
+  wch& operator = (const wch& tmp) {
+    a = tmp.a;
+    b = tmp.b;
+    return *this;
+  }
+  wch& operator = (const char& c) {
+    a = c;
+    b = 0;
+    return *this;
+  }
+  bool operator == (const char& c) {
+    return a == c;
+  }
+  bool operator != (const char& c) {
+    return a != c;
+  }
+};
 atomic_int playernumber(0), alivenumber(0);
-char gamemap[20][41], scenebuf[20][41];
+char gamemap[20][41];
+wch scenebuf[20][41];
 const int f[4][2]={-1,0,0,1,1,0,0,-1};
 int dura;
 SOCKET ListenSocket;
@@ -26,10 +51,11 @@ class Player {
  public:
   int x, y, direc;
   bool alive;
-  char icon;
+  wch icon;
   char name[20];
   int rank;
   int lastshoot;
+  int killed;
   void setoperation(int d, int m, int s) {
     direction = d;
     movement = m;
@@ -43,6 +69,7 @@ class Player {
     shoot = 0;
     rank = 0;
     lastshoot = 0;
+    killed = 0;
     memset(name, 0, sizeof(name));
   }
   bool operator<(const Player cmper) const {
@@ -52,6 +79,7 @@ class Player {
 class Bullet {
  public:
   int x, y, direc;
+  list <Player>::iterator it;
   Bullet(int x = 0, int  y = 0, int direc = 0): x(x), y(y), direc(direc) {}
 };
 void ListenNewPlayerAdd();
@@ -128,6 +156,7 @@ int main() {
 void run() {
   while (true) {
     alivenumber = playernumber.load();
+    mapinit();
     for (auto it = PlayerList.begin(); it != PlayerList.end(); ++it) {
       it -> alive = true;
       it -> rank = 0;
@@ -135,74 +164,106 @@ void run() {
       it -> x = playertmp.x;
       it -> y = playertmp.y;
       it -> direc = 0;
+      it -> direction = 0;
     }
-    mapinit();
     int bulletupdate = clock() - 100;
     while (alivenumber > 1) {
-      memcpy(scenebuf, gamemap, sizeof(scenebuf));
+      for (int i = 0; i < 20; ++i) {
+        for (int j =0; j < 41; ++j) {
+          scenebuf[i][j] = gamemap[i][j];
+        }
+      }
       for (auto it = PlayerList.begin(); it != PlayerList.end(); ++it) {
         if (! it -> alive) continue;
-        if (scenebuf[it -> x + f[it -> direction][0]][it -> y + f[it -> direction][1]] != ' ') goto nxt;
-        it -> direc = it -> direction;
-        if (it -> movement > 0) {
-          if (scenebuf[it -> x + 2 * f[it -> direc][0]][it -> y + 2 * f[it -> direc][1]] == ' ') {
-            it -> x += f[it -> direc][0];
-            it -> y += f[it -> direc][1];
-          }
+        if (it -> movement) {
+          if (scenebuf[it -> x + f[it -> direction][0]][it -> y + f[it -> direction][1]] != ' ') goto nxt;
+          if (scenebuf[it -> x][it -> y] != ' ') goto nxt;
+          it -> direc = it -> direction;
+          it -> x += f[it -> direc][0];
+          it -> y += f[it -> direc][1];
           it -> movement = 0;
-        } else if (it -> movement < 0) {
-          if (scenebuf[it -> x - f[it -> direc][0]][it -> y - f[it -> direc][1]] == ' ') {
-            it -> x -= f[it -> direc][0];
-            it -> y -= f[it -> direc][1];
-          }
-          it -> movement = 0;
+        }
+        else {
+          if (scenebuf[it -> x - f[it -> direction][0]][it -> y - f[it -> direction][1]] != ' ') goto nxt;
+          it -> direc = it -> direction;
         }
         nxt:;
         if (it -> shoot && clock() - (it -> lastshoot) > 3000) {
           it -> lastshoot = clock();
-          Bullet tmp(it -> x + f[it -> direc][0], it -> y + f[it -> direc][1], it -> direc);
+          int sig = it -> shoot > 0 ? 1 : -1;
+          Bullet tmp(it -> x + sig * f[it -> direc][0], it -> y + sig * f[it -> direc][1], it -> direc);
+          if (sig == -1) tmp.direc = (tmp.direc + 2) % 4;
+          tmp.it = it;
           BulletList.emplace_back(tmp);
           it -> shoot = 0;
         }
         scenebuf[it -> x][it -> y] = it -> icon;
-        scenebuf[it -> x + f[it -> direc][0]][it -> y + f[it -> direc][1]] = (it -> direc % 2 == 1? '-' : '|');
+        scenebuf[it -> x - f[it -> direc][0]][it -> y - f[it -> direc][1]] = (it -> direc % 2 == 1? '-' : '|');
       }
+      bool p = 0;
       for (auto it = BulletList.begin(); it != BulletList.end();) {
         if (clock() - bulletupdate > 100) {
+          p = 1;
           it -> x += f[it -> direc][0];
           it -> y += f[it -> direc][1];
           if (scenebuf[it -> x][it -> y] == '#') {
             BulletList.erase(it);
             continue;
           }
-          bulletupdate = clock();
         }
         if (scenebuf[it -> x][it -> y] != ' ' && scenebuf[it -> x][it -> y] != '|' && scenebuf[it -> x][it -> y] != '-') {
           scenebuf[it -> x][it -> y] = (it -> direc % 2 == 1? '-' : '|');
+          //++ (it -> it -> killed);
+          snprintf(mesg, sizeof(mesg), "%s", it -> it -> name);
           BulletList.erase(it);
           continue;
         }
         scenebuf[it -> x][it -> y] = (it -> direc % 2 == 1? '-' : '|');
         ++it;
       }
-      for (auto it = PlayerList.begin(); it != PlayerList.end(); ++it) {
+      if (p) bulletupdate = clock();
+      {
+      int i = 0;
+      for (auto it = PlayerList.begin(); it != PlayerList.end(); ++it, ++i) {
         if (scenebuf[it -> x][it -> y] == '|' || scenebuf[it -> x][it -> y] == '-') {
           it -> rank = alivenumber;
           it -> alive = false;
           --alivenumber;
+          char tmp[50];
+          snprintf(tmp, sizeof(tmp), "%s", mesg);
+          snprintf(mesg, sizeof(mesg), "%s被%s杀死了!", it -> name, tmp);
+          for (int j = strlen(mesg); j < 49; ++j) mesg[j] = ' ';
+          mesg[49] = '\0';
+        }
+        if (i < 10) {
+          snprintf(killnumber[i], sizeof(killnumber[i]), "%s的分数是: %d", it -> name, it -> killed);
+          for (int j = strlen(killnumber[i]); j < 49; ++j) killnumber[i][j] = ' ';
+          killnumber[i][49] = '\0';
         }
       }
-      MyWait(9);
+      }
+      MyWait(20);
     }
     PlayerList.sort();
     int i = 1;
-    memset(scenebuf, (int)' ', sizeof(scenebuf));
+    //memset(scenebuf, (int)' ', sizeof(scenebuf));
+    for (int i = 0; i < 20; ++i) {
+      for (int j = 0; j < 40; ++j) {
+        scenebuf[i][j] = ' ';
+      }
+    }
     char tmps[41];
     for (auto it = PlayerList.begin(); it != PlayerList.end(); ++it, ++i) {
+      if (it -> rank == 0) it -> rank = 1;
+      if (playernumber > 1)
+        it -> killed += playernumber - it -> rank;
       snprintf(tmps, sizeof(tmps), "第%d名: %s", i, it -> name);
       int len = strlen(tmps);
-      for (int j = 0; j < len; ++j) {
-        scenebuf[i - 1][j] = tmps[j];
+      for (int j = 0, k = 0; j < len; ++j, ++k) {
+        scenebuf[i - 1][k] = tmps[j];
+        if (tmps[j] < 0) {
+          scenebuf[i - 1][k].b = tmps[++j];
+        }
       }
       scenebuf[i - 1][40] = '\0';
     }
@@ -227,7 +288,7 @@ DWORD WINAPI PlayerContactThread(LPVOID lpParameter) {
   SOCKET *ClientSocket = (SOCKET*) lpParameter;
   auto ClientPlayer = prev(PlayerList.end());
   int status, issend;
-  status = recv(*ClientSocket, ClientPlayer -> name, sizeof(ClientPlayer -> name), 0);
+  status = recv(*ClientSocket, (char*)(ClientPlayer -> name), sizeof(ClientPlayer -> name), 0);
   if (status == SOCKET_ERROR || status == 0) {
     --alivenumber;
     --playernumber;
@@ -237,7 +298,16 @@ DWORD WINAPI PlayerContactThread(LPVOID lpParameter) {
     return 0;
   }
   cout << ClientPlayer -> name << ' ' << "已加入！\n";
+  ClientPlayer -> icon = ClientPlayer -> name[0];
+  if (ClientPlayer -> name[0] < 0) {
+    ClientPlayer -> icon.a = rand() % 26 + 'A' + rand() % 2 * 32;
+  }
+  if (ClientPlayer -> name[0] == '#') {
+    goto abaaba;
+  }
+  int st, ed;
   while (1) {
+    st = clock();
     status = recv(*ClientSocket, (char*) &issend, sizeof(issend), 0);
     if (status <= 0) break;
     status = recv(*ClientSocket, (char *)(&(ClientPlayer -> direction)), sizeof (ClientPlayer -> direction), 0);
@@ -249,11 +319,17 @@ DWORD WINAPI PlayerContactThread(LPVOID lpParameter) {
     //cout<<ClientPlayer->direction<<' '<<ClientPlayer->movement<<' '<<ClientPlayer -> shoot<<endl;
     if (issend) {
       for (int i = 0; i < 20; ++i) {
-        send(*ClientSocket, scenebuf[i], sizeof(scenebuf[i]), 0);
+        send(*ClientSocket, (char*)scenebuf[i], sizeof(scenebuf[i]), 0);
       }
+      for (int i = 0; i < 10; ++i) {
+        send(*ClientSocket, (char*)killnumber[i], sizeof(killnumber[i]), 0);
+      }
+      send(*ClientSocket, mesg, sizeof(mesg), 0);
     }
-    MyWait(10);
+    ed = clock();
+    MyWait(max(0, 30 - ed + st));
   }
+  abaaba:;
   --playernumber;
   if (ClientPlayer -> alive) {
     --alivenumber;
