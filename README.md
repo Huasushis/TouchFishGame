@@ -1,2 +1,5 @@
-# TouchFishGame
-A game that can play on computer class
+## 控制台联机枪战游戏
+
+*注：仅可在 windows 环境下运行，由于是初中时写的代码，非常屎山，大概率不再维护。*
+
+一款在控制台下的枪战游戏，服务端需要运行 `server.cpp`，默认端口 11451，可更改 `PORT` 宏来修改。客户端运行 `client.cpp` 按照文字提示操作即可。一般情况下在同一局域网下运行，目前尝试过 ipv4，ipv6 以及域名不确定能否运行，请自行尝试。
